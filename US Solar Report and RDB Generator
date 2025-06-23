@@ -78,8 +78,6 @@ def show_rdb_screen(workbook, report_template, report_path):
     back_btn = tk.Button(main_frame, text="Back", command=lambda:show_selection_screen(workbook, report_template, report_path), font=("Arial", 10))
     back_btn.pack(side="left", pady=5, padx=5)
 
-
-
 # --- Utility to Clear Frame ---
 def clear_main_frame():
     for widget in main_frame.winfo_children():
@@ -114,6 +112,7 @@ def show_welcome_screen():
     clear_main_frame()
     create_quit_button()
     def browse_for_project_folder():
+        workbook = ""
         workbook = filedialog.askopenfilename(title="Select Project Excel Sheet", filetypes=[("Excel Files","*.xlsx")])
         workbook = workbook.replace('/', '\\')
         if not workbook:
