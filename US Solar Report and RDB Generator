@@ -1,0 +1,309 @@
+import os
+import openpyxl as xl
+from openpyxl import load_workbook
+from docxtpl import DocxTemplate
+from docx2pdf import convert
+from datetime import datetime
+from PyPDF2 import PdfMerger
+import shutil
+import time
+import tkinter as tk
+from tkinter import messagebox
+from tkinter import filedialog
+
+# --- Selection ---
+def show_selection_screen(workbook, report_template, report_path):
+    clear_main_frame()
+
+    tk.Button(main_frame, text="Generate Report", command=lambda:run_report(workbook, report_template, report_path), width=25, font=("Arial", 12)).pack(pady=10)
+    tk.Button(main_frame, text="Generate RDB", command=lambda:show_rdb_screen(workbook, report_template, report_path), width=25, font=("Arial", 12)).pack(pady=10)
+    back_btn = tk.Button(main_frame, text="Back", command=show_welcome_screen, font=("Arial", 10))
+    back_btn.pack(side="left", pady=5, padx=5)
+
+
+def show_rdb_screen(workbook, report_template, report_path):
+    clear_main_frame()
+
+    # Vars to store input
+    settings_template_var = tk.StringVar()
+    project_name_var = tk.StringVar()
+
+    # Top Frame for project name
+    frame = tk.Frame(main_frame)
+    frame.pack(pady=2, fill="x")
+
+    tk.Label(frame, text="Project Name:", font=("Arial", 12), width=18, anchor="w").pack(side="left")
+    entry = tk.Entry(frame, font=("Arial", 12), width=40, textvariable=project_name_var)
+    entry.pack(side="left", fill="x", expand=True)
+
+    # Folder browse row
+    folder_frame = tk.Frame(main_frame)
+    folder_frame.pack(pady=2, fill="x")
+
+    tk.Label(folder_frame, text="Select Settings Folder:", font=("Arial", 12), width=18, anchor="w").pack(side="left")
+    # Label to display selected path
+    path_label = tk.Label(folder_frame, text="", font=("Arial", 10), fg="gray")
+    path_label.pack(side="left", padx=5)
+
+    def browse_and_show_path():
+        path = filedialog.askdirectory(title="Select Recloser Folder")
+        if path:
+            settings_template_var.set(path)
+            path_label.config(text=path)
+
+    browse_btn = tk.Button(folder_frame, text="Browse", font=("Arial", 10), command=browse_and_show_path)
+    browse_btn.pack(side="left", padx=5)
+
+    # Submit button
+    def submit():
+        settings_template = settings_template_var.get()
+        project_name = project_name_var.get()
+
+        if not settings_template or not os.path.exists(settings_template):
+            messagebox.showerror("Error", "Please select a valid Settings Folder.")
+            return
+        if not project_name:
+            messagebox.showerror("Error", "Please enter a Project Name.")
+            return
+
+        parent_path = os.path.dirname(report_path.rstrip("\\/"))  # strip trailing slashes, then go up one
+        settings_output_path = os.path.join(parent_path, project_name + " RDBs")
+
+        run_rdb(workbook, settings_template, settings_output_path)
+
+
+    submit_btn = tk.Button(main_frame, text="Submit", command=submit, font=("Arial", 10))
+    submit_btn.pack(pady=5, padx=5)
+
+    back_btn = tk.Button(main_frame, text="Back", command=lambda:show_selection_screen(workbook, report_template, report_path), font=("Arial", 10))
+    back_btn.pack(side="left", pady=5, padx=5)
+
+
+
+# --- Utility to Clear Frame ---
+def clear_main_frame():
+    for widget in main_frame.winfo_children():
+        widget.destroy()
+
+# --- Utility to Create Quit Button ---
+def create_quit_button():
+    # If a previous quit button exists, destroy it
+    existing = getattr(root, "quit_button_frame", None)
+    if existing:
+        existing.destroy()
+
+    # Create a new frame and attach it to root
+    quit_frame = tk.Frame(root)
+    quit_frame.place(relx=1.0, rely=0.0, anchor="ne", x=-10, y=10)  # top-right with margin
+
+    quit_button = tk.Button(
+        quit_frame,
+        text="Quit",
+        command=root.quit,
+        font=("Arial", 10),
+        bg="red",
+        fg="white"
+    )
+    quit_button.pack()
+
+    # Store the frame so we can remove it later if needed
+    root.quit_button_frame = quit_frame 
+
+# --- Welcome Screen ---
+def show_welcome_screen():
+    clear_main_frame()
+    create_quit_button()
+    def browse_for_project_folder():
+        workbook = filedialog.askopenfilename(title="Select Project Excel Sheet", filetypes=[("Excel Files","*.xlsx")])
+        workbook = workbook.replace('/', '\\')
+        if not workbook:
+            return
+        for i in range(len(workbook) - 1, -1, -1):
+            if workbook[i] == '\\':
+                report_path = workbook[:i+1]
+                break
+        report_template = report_path + 'Settings Report Template - US Solar.docx'
+        show_selection_screen(workbook, report_template, report_path)
+    tk.Button(main_frame, text="Browse for Project Excel Sheet", command=browse_for_project_folder, width=25, font=("Arial", 12)).pack(pady=10)
+
+
+#--------------------------------------------------------------------------------------------------------------------------
+def run_report(workbook_path, template_path, doc_output_path):
+    """This function extracts table data from Excel, puts that data into a Word table, and fills in
+    other Word template variables."""
+
+    # Pull table data from Excel workbook
+    workbook = load_workbook(workbook_path, data_only=True)
+    sheet_var = workbook['Report Variables']
+
+    context = {}
+    for row in range(2, sheet_var.max_row + 1):
+        key = sheet_var.cell(row, 1).value
+        value = sheet_var.cell(row, 2).value
+        rounding = sheet_var.cell(row, 3).value
+
+        if key is not None:
+            if isinstance(value, float):
+                if rounding == 1:
+                    context[key] = f"{value:.3f}"
+                else:
+                    context[key] = f"{value:.2f}"
+            else:
+                context[key] = value
+
+    workbook.close()
+
+    # Process Word template
+    template = DocxTemplate(template_path)
+    template.render(context)
+
+    # Save Main Word Doc
+    report_date = datetime.strptime(context['Date'], '%B %d, %Y')
+    report_name = f"{report_date.date()} {context['Project']} Relay Settings Report - {context['Client']}"
+    os.chdir(doc_output_path)
+    template.save('Main Report.docx')
+
+    # Convert Main Report to pdf
+    convert('Main Report.docx')
+
+    # Process Appendices
+    appendices_path = os.path.join(doc_output_path, 'Appendices')
+    output_folder = os.path.join(appendices_path, 'output')
+    archives_folder = os.path.join(appendices_path, 'archives')
+    pdf_folder = os.path.join(appendices_path, 'pdf')
+
+    # Safely manage output folder
+    if os.path.exists(output_folder):
+        os.makedirs(archives_folder, exist_ok=True)
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        archived_output = os.path.join(archives_folder, f'output_{timestamp}')
+        shutil.move(output_folder, archived_output)
+
+    os.mkdir(output_folder)
+
+    # Make sure pdf folder exists
+    os.makedirs(pdf_folder, exist_ok=True)
+
+    os.chdir(appendices_path)
+    appendices = os.listdir('.')
+
+    for appendix in appendices:
+        if appendix.endswith('.docx'):
+            template = DocxTemplate(appendix)
+            template.render(context)
+
+            # Save .docx
+            app_docx_path = os.path.join(output_folder, appendix)
+            template.save(app_docx_path)
+
+            # Convert to .pdf
+            app_pdf_path = os.path.join(pdf_folder, appendix.replace('.docx', '.pdf'))
+            convert(app_docx_path, app_pdf_path)
+
+    # Merge pdfs
+    merger = PdfMerger()
+    os.chdir(doc_output_path)
+    merger.append('Main Report.pdf')
+    os.chdir(pdf_folder)
+    for appendix_pdf in os.listdir('.'):
+        if appendix_pdf.endswith('.pdf'):
+            merger.append(appendix_pdf)
+
+    os.chdir(doc_output_path)
+    with open(f"{report_name}.pdf", 'wb') as output:
+        merger.write(output)
+
+    merger.close()
+
+    messagebox.showinfo("Success", "Report Complete...")
+
+#--------------------------------------------------------------------------------------------------------------------------
+def run_rdb(workbook_path, settings_template_path, settings_output_path):
+    """This function updates the rdb text based template which can be imported in Quickset."""
+
+    # --- Handle Existing Output Folder ---
+    if os.path.exists(settings_output_path):
+        response = messagebox.askquestion(
+            "Folder Already Exists",
+            f"The folder '{os.path.basename(settings_output_path)}' already exists.\n\n"
+            "Do you want to archive the old one and continue?",
+            icon='warning'
+        )
+
+        if response == "yes":
+            try:
+                # Create archives folder if it doesn't exist
+                parent_dir = os.path.dirname(settings_output_path)
+                archive_dir = os.path.join(parent_dir, "archives")
+                os.makedirs(archive_dir, exist_ok=True)
+
+                # Create unique archive folder name
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                archived_name = os.path.basename(settings_output_path) + f"_archived_{timestamp}"
+                archived_path = os.path.join(archive_dir, archived_name)
+
+                # Move the old folder to archive
+                shutil.move(settings_output_path, archived_path)
+            except Exception as e:
+                messagebox.showerror("Error", f"Could not archive the existing folder:\n{e}")
+                return
+        else:
+            # User cancelled
+            messagebox.showinfo("Cancelled", "Operation cancelled by the user.")
+            return
+
+    # --- Create output directory ---
+    try:
+        shutil.copytree(settings_template_path, settings_output_path)
+    except Exception as e:
+        messagebox.showerror("Error", f"Failed to copy RDB template:\n{e}")
+        return
+
+    # --- Get RDB Variables ---
+    workbook = xl.load_workbook(workbook_path, data_only=True)
+    sheet_var = workbook['RDB Variables']
+
+    word_bits = {}
+    for row in range(2, sheet_var.max_row + 1):
+        key = sheet_var.cell(row, 1).value
+        val = sheet_var.cell(row, 2).value
+        rounding = sheet_var.cell(row, 3).value
+
+        if key is not None:
+            if isinstance(val, float):
+                word_bits[key] = f"{val:.3f}" if rounding == 1 else f"{val:.2f}"
+            else:
+                word_bits[key] = val
+
+    # --- Generate RDB .txt files ---
+    original_dir = os.getcwd()
+    try:
+        for file in os.listdir(settings_output_path):
+            if file.endswith('.txt'):
+                file_path = os.path.join(settings_output_path, file)
+                with open(file_path, 'r') as f:
+                    content = f.readlines()
+
+                for bit in word_bits:
+                    for i, line in enumerate(content):
+                        if line.startswith(bit + ','):
+                            content[i] = f'{bit},"{word_bits[bit]}"\n'
+
+                with open(file_path, 'w') as f:
+                    f.writelines(content)
+    finally:
+        os.chdir(original_dir)
+
+
+    messagebox.showinfo("Success", f"RDB files saved to:\n{settings_output_path}")
+
+
+#--------------------------------------------------------------------------------------------------------------------------
+# --- Main Tkinter Window ---
+root = tk.Tk()
+root.title("Report and RDB Generator")
+root.state('zoomed')
+main_frame = tk.Frame(root)
+main_frame.pack(expand=True)
+show_welcome_screen()
+root.mainloop()
